@@ -21,13 +21,8 @@ import { maybeCreateDynamicAgent } from "./dynamic-agent.js";
 import { normalizeFeishuExternalKey } from "./external-keys.js";
 import { downloadMessageResourceFeishu } from "./media.js";
 import { extractMentionTargets, isMentionForwardRequest } from "./mention.js";
-import {
-  resolveFeishuGroupConfig,
-  resolveFeishuReplyPolicy,
-  resolveFeishuAllowlistMatch,
-  isFeishuGroupAllowed,
-} from "./policy.js";
-import { parsePostContent } from "./post.js";
+import { resolveFeishuGroupConfig, resolveFeishuReplyPolicy, resolveFeishuAllowlistMatch, isFeishuGroupAllowed } from "./policy.js";
+import { parsePostContent, FALLBACK_POST_TEXT } from "./post.js";
 import { createFeishuReplyDispatcher } from "./reply-dispatcher.js";
 import { getFeishuRuntime } from "./runtime.js";
 import { getMessageFeishu, listFeishuThreadMessages, sendMessageFeishu } from "./send.js";
@@ -311,6 +306,39 @@ function parseMessageContent(content: string, messageType: string): string {
   if (messageType === "post") {
     // Extract text content from rich text post
     const { textContent } = parsePostContent(content);
+    // If parsePostContent returns fallback text, try to extract text from raw content
+    // This handles cases where Feishu API returns non-standard post format
+    if (textContent === FALLBACK_POST_TEXT) {
+      // Try to extract any text content from the raw JSON
+      try {
+        const parsed = JSON.parse(content);
+        // Handle case where content might be wrapped in locale keys (zh_cn, en_us, etc.)
+        const localeContent = parsed.zh_cn || parsed.en_us || parsed;
+        const title = localeContent.title || "";
+        const contentArray = localeContent.content;
+        if (Array.isArray(contentArray)) {
+          const extractedTexts: string[] = [];
+          for (const paragraph of contentArray) {
+            if (Array.isArray(paragraph)) {
+              for (const element of paragraph) {
+                if (element && typeof element === "object" && "text" in element) {
+                  const text = element.text as string;
+                  if (text && text.trim()) {
+                    extractedTexts.push(text);
+                  }
+                }
+              }
+            }
+          }
+          if (extractedTexts.length > 0) {
+            const titleText = title ? `${title} ` : "";
+            return `${titleText}${extractedTexts.join(" ")}`;
+          }
+        }
+      } catch {
+        // Fall through to return fallback text
+      }
+    }
     return textContent;
   }
 
@@ -1228,6 +1256,7 @@ export async function handleFeishuMessage(params: {
 
     // Resolve media from message
     const mediaMaxBytes = (feishuCfg?.mediaMaxMb ?? 30) * 1024 * 1024; // 30MB default
+    // 解析，下载
     const mediaList = await resolveFeishuMediaList({
       cfg,
       messageId: ctx.messageId,
@@ -1237,6 +1266,7 @@ export async function handleFeishuMessage(params: {
       log,
       accountId: account.accountId,
     });
+    
     const mediaPayload = buildAgentMediaPayload(mediaList);
 
     // Fetch quoted/replied message content if parentId exists

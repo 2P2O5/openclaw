@@ -1,6 +1,6 @@
 import { normalizeFeishuExternalKey } from "./external-keys.js";
 
-const FALLBACK_POST_TEXT = "[Rich text message]";
+export const FALLBACK_POST_TEXT = "[Rich text message]";
 const MARKDOWN_SPECIAL_CHARS = /([\\`*_{}\[\]()#+\-!|>~])/g;
 
 type PostParseResult = {
